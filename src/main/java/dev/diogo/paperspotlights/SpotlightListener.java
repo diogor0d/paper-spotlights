@@ -57,6 +57,7 @@ public final class SpotlightListener implements Listener {
     private final SetupSessions sessions;
     private final LightingLens lens;
     private final NamespacedKey controllerKey;
+    private final EventReconciliationCoalescer<BlockPosition> eventReconciler;
 
     public SpotlightListener(
             JavaPlugin plugin,
@@ -70,6 +71,11 @@ public final class SpotlightListener implements Listener {
         this.sessions = sessions;
         this.lens = lens;
         this.controllerKey = controllerKey;
+        this.eventReconciler = new EventReconciliationCoalescer<>(
+                manager::filterRelevantPositions,
+                task -> plugin.getServer().getScheduler().runTask(plugin, task),
+                manager::reconcilePositions
+        );
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -301,11 +307,7 @@ public final class SpotlightListener implements Listener {
     }
 
     private void reconcileLater(Collection<BlockPosition> positions) {
-        if (positions.isEmpty()) {
-            return;
-        }
-        List<BlockPosition> snapshot = List.copyOf(positions);
-        plugin.getServer().getScheduler().runTask(plugin, () -> manager.reconcilePositions(snapshot));
+        eventReconciler.offer(positions);
     }
 
     private static void promptIfReady(Player player, SetupSession session) {

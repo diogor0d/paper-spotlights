@@ -45,7 +45,19 @@ public final class PaperSpotlightsPlugin extends JavaPlugin {
         SetupSessions sessions = new SetupSessions();
         PreviewService preview = new PreviewService();
         if (getConfig().getBoolean("colored-effects.enabled", true)) {
-            coloredEffects = new ColoredLightEffectService(this);
+            int intervalTicks = boundedInt("colored-effects.interval-ticks", 10, 5, 100);
+            double viewDistance = boundedDouble("colored-effects.view-distance", 48.0, 8.0, 128.0);
+            int particleBudget = boundedInt("colored-effects.particles-per-player", 48, 1, 256);
+            int effectChecks = boundedInt("colored-effects.effect-checks-per-player", 64, 1, 512);
+            int packetBudget = boundedInt("colored-effects.packets-per-player", 12, 1, 64);
+            coloredEffects = new ColoredLightEffectService(
+                    this,
+                    intervalTicks,
+                    viewDistance,
+                    particleBudget,
+                    effectChecks,
+                    packetBudget
+            );
         }
 
         SpotlightRepository repository = new SpotlightRepository(getDataFolder().toPath());
@@ -193,5 +205,27 @@ public final class PaperSpotlightsPlugin extends JavaPlugin {
             coloredEffects.close();
             coloredEffects = null;
         }
+    }
+
+    private int boundedInt(String path, int fallback, int minimum, int maximum) {
+        int configured = getConfig().getInt(path, fallback);
+        int bounded = Math.clamp(configured, minimum, maximum);
+        if (bounded != configured) {
+            getLogger().warning(path + " must be " + minimum + "-" + maximum
+                    + "; using " + bounded + ".");
+        }
+        return bounded;
+    }
+
+    private double boundedDouble(String path, double fallback, double minimum, double maximum) {
+        double configured = getConfig().getDouble(path, fallback);
+        double bounded = Double.isFinite(configured)
+                ? Math.clamp(configured, minimum, maximum)
+                : fallback;
+        if (Double.compare(bounded, configured) != 0) {
+            getLogger().warning(path + " must be a finite value from " + minimum + "-" + maximum
+                    + "; using " + bounded + ".");
+        }
+        return bounded;
     }
 }

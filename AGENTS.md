@@ -24,6 +24,7 @@ The pinned Paper build is a beta. A clean compile is necessary but not sufficien
 |---|---|
 | `PaperSpotlightsPlugin` | Lifecycle, config validation, registration, asynchronous updater startup. |
 | `SpotlightCommand` / `SpotlightListener` | Player commands, lens selection, controller events, and world-event reconciliation. |
+| `EventReconciliationCoalescer` | Immediate relevance filtering, per-tick deduplication, and a single deferred event-reconciliation flush. |
 | `SpotlightManager` | Authoritative in-memory definitions, indexes, mutations, persistence ordering, and bounded work queue. |
 | `light/LightFieldService` | Contribution overlap, claim ownership, and all physical `LIGHT`/water world writes. |
 | `color/ColoredLightEffectService` | Bounded, player-targeted cosmetic color washes; never writes world state. |
@@ -51,9 +52,12 @@ The pinned Paper build is a beta. A clean compile is necessary but not sufficien
 - Preserve `Waterlogged` when changing a light level. Releasing or explicitly cleaning a waterlogged light restores `WATER`, never air.
 - Overlap resolves to the maximum active intensity. Removing or disabling one owner must not erase another owner's required light.
 - Do not force-load chunks. Chunk-load events and the loaded-position sweep reconcile dormant cells.
-- Filter event coordinates through the contribution/managed index before enqueueing them. Unrelated block or fluid activity must not consume the bounded queue.
+- Filter event coordinates through the contribution/managed index before scheduling reconciliation. Coalesce relevant coordinates into at most one deferred event flush per tick so unrelated or repeated block/fluid events cannot create scheduler-task floods.
+- Chunk-load reconciliation must use the chunk index; never scan every known position to answer one chunk event.
+- Bound both world writes and safety-sweep inspection work. The rotating sweep currently inspects `8-64` positions once per second and must not become a full loaded-position scan.
 - Keep physical changes bounded by `changes-per-tick`; do not move unbounded block work back into player event handlers.
-- Night-only output is derived from each loaded world's time and the persisted master switch. Dusk claims must be persisted before lighting; dawn cleanup remains bounded.
+- Retain ownership reservations while a spotlight is disabled or gated off by daytime, but clear its physical `LIGHT`. Release a claim only when no definition reserves that position; this avoids daily claim churn without weakening foreign-block safety.
+- Night-only output is derived from each loaded world's time and the persisted master switch. Poll it every 20 ticks. Dusk claims must be persisted before lighting; dawn cleanup remains bounded.
 - Colored effects stay cosmetic and bounded. They must not force-load chunks, create persistent entities, or imply that vanilla lighting has RGB support.
 
 ### Persistence ordering
@@ -84,7 +88,7 @@ The pinned Paper build is a beta. A clean compile is necessary but not sufficien
 - Persisted `night-only` and `color` were introduced in schema 2. Schema 1 maps them to `false` and `none`; malformed schema 2 fields fail closed.
 - Automatic night is the normalized world-time interval `[13000, 23000)`. Weather and local block light do not affect it.
 - `none` plus all 16 vanilla dye IDs are stable persisted color values. Color particles never replace native white illumination.
-- Keep `config.yml`, README examples, runtime validation, and tests synchronized. Current accepted ranges are `max-radius` 1-32, `changes-per-tick` 16-2048, and updater size 1-64 MiB.
+- Keep `config.yml`, README examples, runtime validation, and tests synchronized. Current accepted ranges are `max-radius` 1-32, `changes-per-tick` 16-2048, colored interval 5-100 ticks, colored view distance 8-128 blocks, colored per-player particles 1-256, effect checks 1-512, packets 1-64, and updater size 1-64 MiB.
 - Do not regenerate the Maven Wrapper without pinning both the Maven version and the distribution SHA-256.
 - Never edit generated files under `target/`; change their source inputs instead.
 
@@ -124,6 +128,7 @@ Before a release tag, manually test on a backed-up matching Paper server:
 4. Block placement/removal, waterlogging, explosions/pistons where relevant.
 5. Chunk unload/reload and controller entity reload.
 6. Update staging and next-restart replacement.
+7. Use Paper's bundled spark profiler during event bursts, chunk traversal, controller spam, and dusk/dawn transitions when changing performance-sensitive paths.
 
 ## Version and release procedure
 
@@ -146,7 +151,7 @@ For a Paper/Minecraft target update:
 ## Known limitations and technical debt
 
 - There is no automated real-Paper server test. Unit and packaged-JAR tests do not emulate the lighting engine or event ordering.
-- Controller clicks currently rebuild contributions and rewrite the complete YAML state synchronously. The default radius is suitable for a private SMP, but performance work should separate definition persistence from the larger claim journal before supporting large-scale use.
+- Light-affecting mutations now update only the changed spotlight's geometry, and color-only mutations skip light-index work. Every successful definition mutation still rewrites the complete unified YAML state synchronously. Before supporting large-scale servers, replace that cost only with a generation-safe journal or transactional snapshot design; independently replacing definition and claim files can create an unsafe mixed generation after a crash.
 - The model stores a controller UUID but not its expected block/chunk position. Removal paths that bypass hanging-break events can leave an active definition without a physical controller; avoid destructive auto-cleanup when the chunk may simply be unloaded.
 - The updater queries GitHub's single `latest` release before applying the API-channel gate. Once a newer API channel becomes latest, old-channel servers may log a rejected update on each startup and will not discover an older compatible release.
 - Vertical footprint edges are clipped at world build limits; only the selected origin and centre are rejected when out of bounds.

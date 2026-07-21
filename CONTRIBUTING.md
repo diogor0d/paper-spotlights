@@ -61,7 +61,7 @@ Add focused tests for every changed deterministic behaviour. Existing coverage i
 - Spotlight geometry and immutable model validation.
 - Dye palette parsing, bounded colored-effect budgets, and night-time thresholds.
 - Controller dial mapping.
-- Contribution overlap and event filtering.
+- Contribution overlap, retained ownership claims, chunk indexing, bounded safety sweeps, and event coalescing.
 - Persistence round trips, backups, corrupt data, and schema handling.
 - Semantic versions and release parsing.
 - Updater redirects, limits, digests, compatibility, interruption, and cleanup.
@@ -78,6 +78,7 @@ Relevant manual checks include:
 5. Chunk unload/reload and item-frame entity reload.
 6. Automatic mode at dusk/dawn, `/time` jumps, disabled daylight cycle, and restart during both day and night.
 7. Update staging and application on the next restart when updater code changes.
+8. For performance-sensitive changes, use Paper's bundled spark profiler while testing flowing-water or block-event bursts, chunk traversal, repeated controller interactions, and dusk/dawn transitions with several spotlights.
 
 Do not use `/reload` or plugin hot-reload tools for testing.
 

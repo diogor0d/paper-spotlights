@@ -59,7 +59,8 @@ public final class SpotlightManager {
     private BukkitTask worker;
     private boolean managedStateDirty;
     private int persistenceRetryDelayTicks;
-    private int sweepDelayTicks = 100;
+    private int nightCheckDelayTicks = 20;
+    private int sweepDelayTicks = 20;
 
     public SpotlightManager(
             JavaPlugin plugin,
@@ -119,7 +120,7 @@ public final class SpotlightManager {
             persist();
         }
         updateNightStates();
-        Set<BlockPosition> affected = lightField.rebuild(effectiveSpotlights());
+        Set<BlockPosition> affected = lightField.rebuild(byId.values(), effectiveSpotlights());
         Set<BlockPosition> claimsAdded = lightField.prepareClaims(affected);
         if (!claimsAdded.isEmpty()) {
             persist();
@@ -178,7 +179,7 @@ public final class SpotlightManager {
                 SpotlightColor.NONE,
                 controller.getUniqueId()
         );
-        commitMutation(() -> byId.put(spotlight.id(), spotlight));
+        commitSpotlightChange(null, spotlight);
 
         controller.getPersistentDataContainer().set(
                 controllerKey,
@@ -192,7 +193,7 @@ public final class SpotlightManager {
     public Spotlight toggle(String name) throws OperationException {
         Spotlight current = requiredByName(name);
         Spotlight replacement = current.withEnabled(!current.enabled());
-        commitMutation(() -> byId.put(current.id(), replacement));
+        commitSpotlightChange(current, replacement);
         return replacement;
     }
 
@@ -201,23 +202,33 @@ public final class SpotlightManager {
             throw new OperationException("Intensity must be between 1 and 15; use toggle for OFF.");
         }
         Spotlight current = requiredByName(name);
+        if (current.intensity() == intensity) {
+            alignLoadedController(current);
+            return current;
+        }
         Spotlight replacement = current.withIntensity(intensity);
-        commitMutation(() -> byId.put(current.id(), replacement));
+        commitSpotlightChange(current, replacement);
         alignLoadedController(replacement);
         return replacement;
     }
 
     public Spotlight setNightOnly(String name, boolean nightOnly) throws OperationException {
         Spotlight current = requiredByName(name);
+        if (current.nightOnly() == nightOnly) {
+            return current;
+        }
         Spotlight replacement = current.withNightOnly(nightOnly);
-        commitMutation(() -> byId.put(current.id(), replacement));
+        commitSpotlightChange(current, replacement);
         return replacement;
     }
 
     public Spotlight setColor(String name, SpotlightColor color) throws OperationException {
         Spotlight current = requiredByName(name);
+        if (current.color() == color) {
+            return current;
+        }
         Spotlight replacement = current.withColor(color);
-        commitMutation(() -> byId.put(current.id(), replacement));
+        commitMetadataMutation(current, replacement);
         return replacement;
     }
 
@@ -229,7 +240,7 @@ public final class SpotlightManager {
 
     public Spotlight remove(String name) throws OperationException {
         Spotlight current = requiredByName(name);
-        commitMutation(() -> byId.remove(current.id()));
+        commitSpotlightChange(current, null);
         clearLoadedControllerTag(current);
         return current;
     }
@@ -280,6 +291,10 @@ public final class SpotlightManager {
         reconcileLoaded(lightField.relevantPositions(positions));
     }
 
+    public Set<BlockPosition> filterRelevantPositions(Collection<BlockPosition> positions) {
+        return lightField.relevantPositions(positions);
+    }
+
     public void reconcileChunk(String worldKey, int chunkX, int chunkZ) {
         Set<BlockPosition> positions = lightField.relevantPositions(worldKey, chunkX, chunkZ);
         reconcileLoaded(positions);
@@ -293,14 +308,30 @@ public final class SpotlightManager {
         persistOrLog();
     }
 
-    private void commitMutation(Runnable mutation) throws OperationException {
+    private void commitSpotlightChange(Spotlight previous, Spotlight replacement)
+            throws OperationException {
         Map<UUID, Spotlight> before = new LinkedHashMap<>(byId);
         Map<BlockPosition, String> managedBefore = lightField.managedSnapshot();
-        mutation.run();
+        Map<String, Boolean> nightBefore = new LinkedHashMap<>(nightByWorld);
+        boolean managedDirtyBefore = managedStateDirty;
+        boolean previousEffective = previous != null && isEffectivelyEnabled(previous);
+        if (replacement == null) {
+            byId.remove(previous.id());
+        } else {
+            byId.put(replacement.id(), replacement);
+        }
         try {
             reindex();
-            updateNightStates();
-            Set<BlockPosition> affected = lightField.rebuild(effectiveSpotlights());
+            boolean nightChanged = updateNightStates();
+            boolean replacementEffective = replacement != null && isEffectivelyEnabled(replacement);
+            Set<BlockPosition> affected = nightChanged
+                    ? lightField.rebuild(byId.values(), effectiveSpotlights())
+                    : lightField.updateSpotlight(
+                            previous,
+                            previousEffective,
+                            replacement,
+                            replacementEffective
+                    );
             lightField.prepareClaims(affected);
             persist();
             enqueue(affected);
@@ -309,8 +340,22 @@ public final class SpotlightManager {
             byId.putAll(before);
             reindex();
             lightField.loadManaged(managedBefore);
-            updateNightStates();
-            lightField.rebuild(effectiveSpotlights());
+            nightByWorld.clear();
+            nightByWorld.putAll(nightBefore);
+            lightField.rebuild(byId.values(), effectiveSpotlights());
+            managedStateDirty = managedDirtyBefore;
+            throw new OperationException("Could not save the spotlight state; nothing was changed.", exception);
+        }
+        publishSpotlights();
+    }
+
+    private void commitMetadataMutation(Spotlight current, Spotlight replacement)
+            throws OperationException {
+        byId.put(current.id(), replacement);
+        try {
+            persist();
+        } catch (IOException exception) {
+            byId.put(current.id(), current);
             throw new OperationException("Could not save the spotlight state; nothing was changed.", exception);
         }
         publishSpotlights();
@@ -329,9 +374,12 @@ public final class SpotlightManager {
     }
 
     private void processBatch() {
-        Map<String, Boolean> previousNightStates = new LinkedHashMap<>(nightByWorld);
-        if (updateNightStates()) {
-            reconcileNightTransition(previousNightStates);
+        if (--nightCheckDelayTicks <= 0) {
+            nightCheckDelayTicks = 20;
+            Map<String, Boolean> previousNightStates = new LinkedHashMap<>(nightByWorld);
+            if (updateNightStates()) {
+                reconcileNightTransition(previousNightStates);
+            }
         }
 
         int processed = 0;
@@ -359,13 +407,10 @@ public final class SpotlightManager {
             }
         }
 
-        if (pending.isEmpty()) {
-            if (sweepDelayTicks > 0) {
-                sweepDelayTicks--;
-            } else {
-                reconcileLoaded(lightField.relevantLoadedPositions());
-                sweepDelayTicks = 100;
-            }
+        if (pending.isEmpty() && --sweepDelayTicks <= 0) {
+            sweepDelayTicks = 20;
+            int sweepBatchSize = Math.max(8, Math.min(64, changesPerTick / 4));
+            reconcileLoaded(lightField.nextSweepBatch(sweepBatchSize));
         }
     }
 
@@ -391,6 +436,8 @@ public final class SpotlightManager {
 
     private void persist() throws IOException {
         repository.save(byId.values(), lightField.managedSnapshot());
+        managedStateDirty = false;
+        persistenceRetryDelayTicks = 0;
     }
 
     private void persistOrLog() {
@@ -429,7 +476,7 @@ public final class SpotlightManager {
     }
 
     private void reconcileNightTransition(Map<String, Boolean> previousNightStates) {
-        Set<BlockPosition> affected = lightField.rebuild(effectiveSpotlights());
+        Set<BlockPosition> affected = lightField.rebuild(byId.values(), effectiveSpotlights());
         Set<BlockPosition> claimsAdded = lightField.prepareClaims(affected);
         if (!claimsAdded.isEmpty()) {
             try {
@@ -438,7 +485,7 @@ public final class SpotlightManager {
                 lightField.rollbackClaims(claimsAdded);
                 nightByWorld.clear();
                 nightByWorld.putAll(previousNightStates);
-                lightField.rebuild(effectiveSpotlights());
+                lightField.rebuild(byId.values(), effectiveSpotlights());
                 plugin.getLogger().severe(
                         "Could not save dusk light claims; automatic lights stayed unchanged: "
                                 + exception.getMessage()

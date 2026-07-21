@@ -11,6 +11,14 @@ colored-effects:
   # this never affects the real invisible LIGHT blocks.
   enabled: true
 
+  # Renderer cadence and per-player limits. These bound server packet work and
+  # client particle load independently of the number of configured spotlights.
+  interval-ticks: 10
+  view-distance: 48.0
+  particles-per-player: 48
+  effect-checks-per-player: 64
+  packets-per-player: 12
+
 updates:
   # Checks the latest non-prerelease GitHub Release when the plugin starts. A
   # verified update is staged in Paper's update folder and applies on restart.

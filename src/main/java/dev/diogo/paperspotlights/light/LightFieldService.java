@@ -12,6 +12,8 @@ import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.type.Light;
 
 import java.util.Collection;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -27,7 +29,11 @@ import java.util.UUID;
 public final class LightFieldService {
 
     private final Map<BlockPosition, Map<UUID, Integer>> contributions = new HashMap<>();
+    private final Map<BlockPosition, Set<UUID>> reservations = new HashMap<>();
     private final Map<BlockPosition, String> managedBaselines = new LinkedHashMap<>();
+    private final Map<ChunkKey, Set<BlockPosition>> relevantByChunk = new HashMap<>();
+    private final Deque<BlockPosition> sweepOrder = new ArrayDeque<>();
+    private final Set<BlockPosition> scheduledForSweep = new HashSet<>();
 
     public void loadManaged(Map<BlockPosition, String> loaded) {
         for (Map.Entry<BlockPosition, String> entry : loaded.entrySet()) {
@@ -44,6 +50,7 @@ public final class LightFieldService {
         }
         managedBaselines.clear();
         managedBaselines.putAll(loaded);
+        rebuildRelevantChunkIndex();
     }
 
     /**
@@ -51,10 +58,32 @@ public final class LightFieldService {
      * whose physical state may now be stale.
      */
     public Set<BlockPosition> rebuild(Collection<Spotlight> spotlights) {
-        Set<BlockPosition> affected = new LinkedHashSet<>(contributions.keySet());
-        contributions.clear();
+        return rebuild(spotlights, spotlights);
+    }
 
-        for (Spotlight spotlight : spotlights) {
+    /**
+     * Replaces the complete reservation and currently effective contribution
+     * indexes. A reservation keeps an existing managed baseline claim while a
+     * spotlight is disabled or outside its night schedule; only removing the
+     * last definition that reserves a cell permits that claim to be released.
+     */
+    public Set<BlockPosition> rebuild(
+            Collection<Spotlight> definitions,
+            Collection<Spotlight> effectiveSpotlights
+    ) {
+        Set<BlockPosition> affected = new LinkedHashSet<>(contributions.keySet());
+        affected.addAll(reservations.keySet());
+        contributions.clear();
+        reservations.clear();
+
+        for (Spotlight spotlight : definitions) {
+            for (BlockPosition position : SpotlightGeometry.positions(spotlight)) {
+                reservations.computeIfAbsent(position, ignored -> new HashSet<>())
+                        .add(spotlight.id());
+            }
+        }
+
+        for (Spotlight spotlight : effectiveSpotlights) {
             if (!spotlight.enabled() || spotlight.intensity() <= 0) {
                 continue;
             }
@@ -64,7 +93,51 @@ public final class LightFieldService {
             }
         }
         affected.addAll(contributions.keySet());
+        affected.addAll(reservations.keySet());
         affected.addAll(managedBaselines.keySet());
+        rebuildRelevantChunkIndex();
+        return Set.copyOf(affected);
+    }
+
+    /**
+     * Replaces one definition and its optional active contribution without
+     * regenerating unrelated spotlight geometry.
+     */
+    public Set<BlockPosition> updateSpotlight(
+            Spotlight previous,
+            boolean previousEffective,
+            Spotlight replacement,
+            boolean replacementEffective
+    ) {
+        if (previous == null && replacement == null) {
+            throw new IllegalArgumentException("previous and replacement cannot both be null");
+        }
+        if (previous != null && replacement != null && !previous.id().equals(replacement.id())) {
+            throw new IllegalArgumentException("replacement must preserve the spotlight id");
+        }
+
+        Set<BlockPosition> affected = new LinkedHashSet<>();
+        if (previous != null) {
+            for (BlockPosition position : SpotlightGeometry.positions(previous)) {
+                affected.add(position);
+                removeReservation(position, previous.id());
+                if (previousEffective) {
+                    removeContribution(position, previous.id());
+                }
+            }
+        }
+        if (replacement != null) {
+            for (BlockPosition position : SpotlightGeometry.positions(replacement)) {
+                affected.add(position);
+                reservations.computeIfAbsent(position, ignored -> new HashSet<>())
+                        .add(replacement.id());
+                if (replacementEffective && replacement.enabled() && replacement.intensity() > 0) {
+                    contributions.computeIfAbsent(position, ignored -> new HashMap<>())
+                            .put(replacement.id(), replacement.intensity());
+                }
+            }
+        }
+        affected.forEach(this::updateRelevantChunkIndex);
         return Set.copyOf(affected);
     }
 
@@ -85,6 +158,7 @@ public final class LightFieldService {
                 continue;
             }
             managedBaselines.put(position, block.getBlockData().getAsString());
+            updateRelevantChunkIndex(position);
             added.add(position);
         }
         return Set.copyOf(added);
@@ -92,7 +166,10 @@ public final class LightFieldService {
 
     /** Rolls back claims that have not yet been durably committed. */
     public void rollbackClaims(Collection<BlockPosition> positions) {
-        positions.forEach(managedBaselines::remove);
+        for (BlockPosition position : positions) {
+            managedBaselines.remove(position);
+            updateRelevantChunkIndex(position);
+        }
     }
 
     /**
@@ -136,6 +213,7 @@ public final class LightFieldService {
             return ApplyResult.UNCHANGED;
         }
 
+        boolean reserved = reservations.containsKey(position);
         if (block.getType() == Material.LIGHT || block.getType().isAir()) {
             BlockData baselineData;
             if (block.getType() == Material.LIGHT
@@ -148,14 +226,12 @@ public final class LightFieldService {
                 block.setBlockData(baselineData);
             }
         }
+        if (reserved) {
+            return ApplyResult.LIGHT_CLEARED;
+        }
         managedBaselines.remove(position);
+        updateRelevantChunkIndex(position);
         return ApplyResult.CLAIM_RELEASED;
-    }
-
-    public Set<BlockPosition> relevantPositions() {
-        Set<BlockPosition> result = new LinkedHashSet<>(contributions.keySet());
-        result.addAll(managedBaselines.keySet());
-        return Set.copyOf(result);
     }
 
     /** Filters an event's coordinates down to desired or durably managed cells. */
@@ -169,25 +245,32 @@ public final class LightFieldService {
         return Set.copyOf(result);
     }
 
-    /** Returns relevant coordinates whose worlds and chunks are currently loaded. */
-    public Set<BlockPosition> relevantLoadedPositions() {
-        Set<BlockPosition> result = new LinkedHashSet<>();
-        for (BlockPosition position : relevantPositions()) {
-            if (loadedBlock(position) != null) {
-                result.add(position);
-            }
-        }
-        return Set.copyOf(result);
+    public Set<BlockPosition> relevantPositions(String worldKey, int chunkX, int chunkZ) {
+        Set<BlockPosition> positions = relevantByChunk.get(new ChunkKey(worldKey, chunkX, chunkZ));
+        return positions == null ? Set.of() : Set.copyOf(positions);
     }
 
-    public Set<BlockPosition> relevantPositions(String worldKey, int chunkX, int chunkZ) {
-        Set<BlockPosition> result = new HashSet<>();
-        for (BlockPosition position : relevantPositions()) {
-            if (position.worldKey().equals(worldKey)
-                    && position.x() >> 4 == chunkX
-                    && position.z() >> 4 == chunkZ) {
-                result.add(position);
+    /**
+     * Returns at most {@code maximum} relevant coordinates from a persistent,
+     * fair sweep cursor. It neither builds nor scans the full coordinate set;
+     * callers may filter the returned positions for loaded chunks as needed.
+     */
+    public Set<BlockPosition> nextSweepBatch(int maximum) {
+        if (maximum < 1) {
+            throw new IllegalArgumentException("maximum must be positive");
+        }
+
+        Set<BlockPosition> result = new LinkedHashSet<>();
+        int examined = 0;
+        while (examined < maximum && !sweepOrder.isEmpty()) {
+            BlockPosition position = sweepOrder.removeFirst();
+            scheduledForSweep.remove(position);
+            examined++;
+            if (!isRelevant(position)) {
+                continue;
             }
+            result.add(position);
+            scheduleForSweep(position);
         }
         return Set.copyOf(result);
     }
@@ -222,6 +305,70 @@ public final class LightFieldService {
         return maximum;
     }
 
+    boolean isReserved(BlockPosition position) {
+        return reservations.containsKey(position);
+    }
+
+    private void rebuildRelevantChunkIndex() {
+        relevantByChunk.clear();
+        for (BlockPosition position : contributions.keySet()) {
+            updateRelevantChunkIndex(position);
+        }
+        for (BlockPosition position : managedBaselines.keySet()) {
+            updateRelevantChunkIndex(position);
+        }
+    }
+
+    private void updateRelevantChunkIndex(BlockPosition position) {
+        ChunkKey chunk = ChunkKey.from(position);
+        if (isRelevant(position)) {
+            relevantByChunk.computeIfAbsent(chunk, ignored -> new LinkedHashSet<>()).add(position);
+            scheduleForSweep(position);
+            return;
+        }
+
+        Set<BlockPosition> positions = relevantByChunk.get(chunk);
+        if (positions == null) {
+            return;
+        }
+        positions.remove(position);
+        if (positions.isEmpty()) {
+            relevantByChunk.remove(chunk);
+        }
+    }
+
+    private boolean isRelevant(BlockPosition position) {
+        return contributions.containsKey(position) || managedBaselines.containsKey(position);
+    }
+
+    private void scheduleForSweep(BlockPosition position) {
+        if (scheduledForSweep.add(position)) {
+            sweepOrder.addLast(position);
+        }
+    }
+
+    private void removeReservation(BlockPosition position, UUID owner) {
+        Set<UUID> owners = reservations.get(position);
+        if (owners == null) {
+            return;
+        }
+        owners.remove(owner);
+        if (owners.isEmpty()) {
+            reservations.remove(position);
+        }
+    }
+
+    private void removeContribution(BlockPosition position, UUID owner) {
+        Map<UUID, Integer> owners = contributions.get(position);
+        if (owners == null) {
+            return;
+        }
+        owners.remove(owner);
+        if (owners.isEmpty()) {
+            contributions.remove(position);
+        }
+    }
+
     private static Block loadedBlock(BlockPosition position) {
         NamespacedKey worldKey = NamespacedKey.fromString(position.worldKey());
         if (worldKey == null) {
@@ -239,10 +386,18 @@ public final class LightFieldService {
 
     public enum ApplyResult {
         LIGHT_CHANGED,
+        LIGHT_CLEARED,
         CLAIM_RELEASED,
         OCCUPIED,
         UNMANAGED,
         UNLOADED,
         UNCHANGED
+    }
+
+    private record ChunkKey(String worldKey, int x, int z) {
+
+        private static ChunkKey from(BlockPosition position) {
+            return new ChunkKey(position.worldKey(), position.x() >> 4, position.z() >> 4);
+        }
     }
 }

@@ -6,7 +6,7 @@ PaperSpotlights turns vanilla invisible `LIGHT` blocks into controllable circle 
 
 **Target:** Paper 26.2 · Java 25 · Private/trusted SMPs · No permissions by design
 
-> **Development status:** `v0.2.0` is available on the [Releases page](https://github.com/diogor0d/paper-spotlights/releases/tag/v0.2.0); changes after that tag are unreleased until a new version is cut. The repository currently pins the beta API build `26.2.build.62-beta`, so complete the real-Paper staging checklist in [CONTRIBUTING.md](CONTRIBUTING.md) before each release.
+> **Development status:** Download published builds from the [Releases page](https://github.com/diogor0d/paper-spotlights/releases). Changes on `main` after the latest tag may be unreleased. The repository currently pins the beta API build `26.2.build.62-beta`, so complete the real-Paper staging checklist in [CONTRIBUTING.md](CONTRIBUTING.md) before each release.
 
 ## Highlights
 
@@ -117,7 +117,9 @@ The release-ready artifact is `target/PaperSpotlights.jar`.
 - If a managed light later becomes waterlogged, changing intensity preserves that state and disabling or removing it restores water.
 - If a real block occupies a managed coordinate, the block wins. An active light can return after the cell becomes air again.
 - Overlapping spotlights resolve to the highest active level; disabling one does not erase another owner's light.
-- Changes are coalesced and processed over multiple ticks. Unloaded chunks reconcile when loaded and are never force-loaded.
+- Relevant world events are filtered immediately, coalesced into one next-tick flush, and processed through the bounded work queue. Unloaded chunks reconcile from a chunk index when loaded and are never force-loaded.
+- Once per second, a small rotating safety-sweep batch checks managed positions incrementally; it never scans every spotlight cell in one tick.
+- Disabled and daytime automatic spotlights retain ownership claims while their physical lights remain cleared. This avoids releasing and recreating the same claims at every dawn and dusk.
 - Footprints crossing the world's vertical limits are clipped; the selected origin and centre must themselves be in bounds.
 - Minecraft's vanilla light engine has no RGB channels. Colors are a cosmetic `DUST` particle wash over the target area; actual block illumination remains white and behaves normally.
 - Colored effects are player-targeted and bounded to 48 particles, 12 effect packets, and 64 spotlight checks per player every 10 ticks, within 48 blocks.
@@ -127,7 +129,7 @@ The release-ready artifact is `target/PaperSpotlights.jar`.
 
 `/sl auto <name> on` makes the spotlight night-only. Its normal ON/OFF state remains a master switch: an armed automatic spotlight illuminates from world time `13000` through `22999`, then switches off at dawn. Sneak-clicking its clock or using `/sl toggle` arms or disarms it without forgetting the schedule. Use `/sl auto <name> off` to return to ordinary all-day manual control.
 
-The schedule follows each spotlight's own world time and reacts to `/time` changes or a frozen daylight cycle. It deliberately ignores weather and local block light so the transition is exact and predictable.
+The schedule follows each spotlight's own world time and checks once per second, including after `/time` changes or with a frozen daylight cycle. It deliberately ignores weather and local block light so the transition is predictable.
 
 The default maximum radius is 16. A square of radius `r` uses `(2r + 1)^2` emitters, so larger limits have a real lighting-engine and persistence cost.
 
@@ -141,6 +143,11 @@ changes-per-tick: 128
 
 colored-effects:
   enabled: true
+  interval-ticks: 10
+  view-distance: 48.0
+  particles-per-player: 48
+  effect-checks-per-player: 64
+  packets-per-player: 12
 
 updates:
   enabled: true
@@ -152,6 +159,9 @@ updates:
 - `max-radius` accepts `1-32`; 16 is the recommended private-SMP default.
 - `changes-per-tick` accepts `16-2048` and bounds block reconciliation work per server tick.
 - `colored-effects.enabled` is the global switch for cosmetic colored particles; native illumination is unaffected.
+- `colored-effects.interval-ticks` accepts `5-100`; larger values update the cosmetic wash less often.
+- `colored-effects.view-distance` accepts `8-128` blocks.
+- `colored-effects.particles-per-player` accepts `1-256`, `effect-checks-per-player` accepts `1-512`, and `packets-per-player` accepts `1-64`. These are independent per-player budgets for each effect update.
 - `updates.max-size-mib` accepts `1-64` and caps release-asset downloads.
 - A blank `updates.repository` disables network requests even when `enabled` is true.
 - Configuration changes require a restart. Runtime reload support is deliberately omitted for persistent world state.
@@ -200,6 +210,8 @@ If startup reports invalid or unsupported state, PaperSpotlights disables itself
 ## Development
 
 `clean verify` is the release gate. It compiles with Java warnings treated as errors, runs unit tests, packages the plugin, and validates the actual built JAR with the same identity/API checks used by the updater.
+
+Light-affecting controller changes update only that spotlight's geometry, while color-only changes avoid rebuilding the light index. For crash-safe ordering, each successful definition mutation still rewrites the complete unified `state.yml` synchronously; large public-server scale would require a generation-safe journal rather than casually splitting ownership into independently replaceable files.
 
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing changes.
 - Future coding agents and maintainers should also read [AGENTS.md](AGENTS.md).
