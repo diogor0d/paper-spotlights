@@ -1,0 +1,24 @@
+package dev.diogo.paperspotlights.update;
+
+/** Stable categories for failures reported by the asynchronous updater. */
+public enum UpdateFailure {
+    ALREADY_RUNNING,
+    CLOSED,
+    SCHEDULING_FAILED,
+    INTERRUPTED,
+    RELEASE_REQUEST_FAILED,
+    RELEASE_RESPONSE_INVALID,
+    RELEASE_FORMAT_INVALID,
+    ASSET_NOT_FOUND,
+    ASSET_AMBIGUOUS,
+    UNSAFE_REDIRECT,
+    DOWNLOAD_REQUEST_FAILED,
+    DOWNLOAD_RESPONSE_INVALID,
+    DOWNLOAD_TOO_LARGE,
+    DIGEST_MISMATCH,
+    ARTIFACT_INVALID,
+    ARTIFACT_INCOMPATIBLE,
+    FILESYSTEM_ERROR,
+    ATOMIC_MOVE_UNSUPPORTED,
+    INTERNAL_ERROR
+}

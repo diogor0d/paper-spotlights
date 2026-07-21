@@ -1,0 +1,14 @@
+name: PaperSpotlights
+version: '${project.version}'
+main: dev.diogo.paperspotlights.PaperSpotlightsPlugin
+description: Player-built, dimmable spotlights using vanilla invisible light blocks.
+author: Diogo
+api-version: '26.2'
+load: POSTWORLD
+
+commands:
+  spotlight:
+    description: Create and manage spotlights.
+    usage: /spotlight help
+    aliases: [sl, spotlights]
+

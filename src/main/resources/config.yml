@@ -1,0 +1,23 @@
+# Largest accepted circle radius / square half-width. A square uses (2r + 1)^2
+# invisible light blocks, so raising this can make controller changes expensive.
+max-radius: 16
+
+# Coalesced block reconciliations processed each server tick. This bounds the
+# cost of changing a large spotlight or several overlapping spotlights.
+changes-per-tick: 128
+
+updates:
+  # Checks the latest non-prerelease GitHub Release when the plugin starts. A
+  # verified update is staged in Paper's update folder and applies on restart.
+  enabled: true
+
+  # Set this to the public GitHub repository, for example "diogo/paper-spotlights".
+  # Leaving it blank disables network requests.
+  repository: ''
+
+  # Releases must contain an asset with exactly this name. GitHub's SHA-256
+  # digest and a matching plugin identity/version/API channel are mandatory.
+  asset-name: PaperSpotlights.jar
+
+  # Hard download limit for defense against an unexpectedly large asset.
+  max-size-mib: 16

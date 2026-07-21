@@ -1,0 +1,34 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Check tag matches project version
+        shell: bash
+        run: |
+          [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          project_version="$(bash ./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)"
+          test "${GITHUB_REF_NAME}" = "v${project_version}"
+      - name: Build and test
+        run: bash ./mvnw --batch-mode clean verify
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" target/PaperSpotlights.jar --verify-tag --generate-notes
