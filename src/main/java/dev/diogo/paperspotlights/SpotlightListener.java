@@ -4,6 +4,7 @@ import dev.diogo.paperspotlights.controller.ControllerDial;
 import dev.diogo.paperspotlights.model.BlockPosition;
 import dev.diogo.paperspotlights.model.Plane;
 import dev.diogo.paperspotlights.model.Spotlight;
+import dev.diogo.paperspotlights.model.SpotlightColor;
 import dev.diogo.paperspotlights.setup.LightingLens;
 import dev.diogo.paperspotlights.setup.SetupSession;
 import dev.diogo.paperspotlights.setup.SetupSessions;
@@ -260,7 +261,16 @@ public final class SpotlightListener implements Listener {
     private void useController(Player player, Spotlight current) {
         try {
             Spotlight updated;
-            if (player.isSneaking()) {
+            Optional<SpotlightColor> heldDye = SpotlightColor.fromDye(
+                    player.getInventory().getItemInMainHand().getType()
+            );
+            if (heldDye.isPresent()) {
+                updated = manager.setColor(current.name(), heldDye.get());
+                Messages.success(
+                        player,
+                        updated.name() + " color set to " + heldDye.get().id().replace('_', ' ') + "."
+                );
+            } else if (player.isSneaking()) {
                 updated = manager.toggle(current.name());
             } else {
                 updated = manager.setIntensity(
@@ -275,7 +285,7 @@ public final class SpotlightListener implements Listener {
                     0.7f,
                     updated.enabled() ? 1.2f : 0.8f
             );
-            Messages.controllerStatus(player, updated);
+            Messages.controllerStatus(player, updated, manager.isEffectivelyEnabled(updated));
         } catch (SpotlightManager.OperationException exception) {
             Messages.error(player, exception.getMessage());
         }

@@ -16,6 +16,8 @@ public record Spotlight(
         int radius,
         int intensity,
         boolean enabled,
+        boolean nightOnly,
+        SpotlightColor color,
         UUID controllerUuid
 ) {
 
@@ -29,6 +31,7 @@ public record Spotlight(
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(plane, "plane");
         Objects.requireNonNull(shape, "shape");
+        Objects.requireNonNull(color, "color");
         Objects.requireNonNull(controllerUuid, "controllerUuid");
 
         if (name.isBlank()) {
@@ -43,6 +46,35 @@ public record Spotlight(
         validateIntensity(intensity);
     }
 
+    /** Compatibility constructor for uncoloured, manually controlled spotlights. */
+    public Spotlight(
+            UUID id,
+            String name,
+            BlockPosition origin,
+            BlockPosition target,
+            Plane plane,
+            Shape shape,
+            int radius,
+            int intensity,
+            boolean enabled,
+            UUID controllerUuid
+    ) {
+        this(
+                id,
+                name,
+                origin,
+                target,
+                plane,
+                shape,
+                radius,
+                intensity,
+                enabled,
+                false,
+                SpotlightColor.NONE,
+                controllerUuid
+        );
+    }
+
     public Spotlight withEnabled(boolean newEnabled) {
         return new Spotlight(
                 id,
@@ -54,6 +86,8 @@ public record Spotlight(
                 radius,
                 intensity,
                 newEnabled,
+                nightOnly,
+                color,
                 controllerUuid
         );
     }
@@ -70,8 +104,48 @@ public record Spotlight(
                 radius,
                 newIntensity,
                 enabled,
+                nightOnly,
+                color,
                 controllerUuid
         );
+    }
+
+    public Spotlight withNightOnly(boolean newNightOnly) {
+        return new Spotlight(
+                id,
+                name,
+                origin,
+                target,
+                plane,
+                shape,
+                radius,
+                intensity,
+                enabled,
+                newNightOnly,
+                color,
+                controllerUuid
+        );
+    }
+
+    public Spotlight withColor(SpotlightColor newColor) {
+        return new Spotlight(
+                id,
+                name,
+                origin,
+                target,
+                plane,
+                shape,
+                radius,
+                intensity,
+                enabled,
+                nightOnly,
+                Objects.requireNonNull(newColor, "newColor"),
+                controllerUuid
+        );
+    }
+
+    public boolean isEffectivelyEnabled(boolean night) {
+        return enabled && (!nightOnly || night);
     }
 
     private static void validateIntensity(int value) {

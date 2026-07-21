@@ -13,7 +13,7 @@ PaperSpotlights is a small Paper plugin for a private SMP. Players define a fixt
 - Runtime and compiler: Java 25.
 - Build: Maven Wrapper 3.9.11 with a pinned distribution SHA-256.
 - Descriptor: standard `plugin.yml`; do not migrate to experimental `paper-plugin.yml` without an explicit project decision.
-- Persistent schema: version 1 in `plugins/PaperSpotlights/state.yml`.
+- Persistent schema: version 2 in `plugins/PaperSpotlights/state.yml`; schema 1 migrates to manual, uncolored defaults before world writes.
 - External runtime dependencies: none beyond Paper.
 
 The pinned Paper build is a beta. A clean compile is necessary but not sufficient for release; world-writing changes must also be exercised on a backed-up Paper staging server.
@@ -26,6 +26,7 @@ The pinned Paper build is a beta. A clean compile is necessary but not sufficien
 | `SpotlightCommand` / `SpotlightListener` | Player commands, lens selection, controller events, and world-event reconciliation. |
 | `SpotlightManager` | Authoritative in-memory definitions, indexes, mutations, persistence ordering, and bounded work queue. |
 | `light/LightFieldService` | Contribution overlap, claim ownership, and all physical `LIGHT`/water world writes. |
+| `color/ColoredLightEffectService` | Bounded, player-targeted cosmetic color washes; never writes world state. |
 | `persistence/SpotlightRepository` | Versioned YAML state, backup, and replace-on-save behaviour. |
 | `model/` | Immutable coordinates, planes, shapes, spotlight records, and pure geometry. |
 | `controller/` / `setup/` / `ui/` | Clock dial mapping, per-player setup sessions, lens metadata, messages, and previews. |
@@ -52,6 +53,8 @@ The pinned Paper build is a beta. A clean compile is necessary but not sufficien
 - Do not force-load chunks. Chunk-load events and the loaded-position sweep reconcile dormant cells.
 - Filter event coordinates through the contribution/managed index before enqueueing them. Unrelated block or fluid activity must not consume the bounded queue.
 - Keep physical changes bounded by `changes-per-tick`; do not move unbounded block work back into player event handlers.
+- Night-only output is derived from each loaded world's time and the persisted master switch. Dusk claims must be persisted before lighting; dawn cleanup remains bounded.
+- Colored effects stay cosmetic and bounded. They must not force-load chunks, create persistent entities, or imply that vanilla lighting has RGB support.
 
 ### Persistence ordering
 
@@ -67,6 +70,8 @@ The pinned Paper build is a beta. A clean compile is necessary but not sufficien
 - There are intentionally no permissions. This is a private-SMP design choice, not an omission.
 - Preserve the Gaffer's Lens flow: left-click origin, right-click target surface, right-click a clock item frame, then `/sl create`.
 - The clock has eight levels (`1, 3, 5, 7, 9, 11, 13, 15`); normal click advances and sneak-click toggles without forgetting intensity.
+- Right-clicking a controller with a vanilla dye applies its non-consuming color wash. `/sl color <name> none` disables it.
+- Night-only automation is per spotlight. The persisted `enabled` flag remains its master switch; the schedule gates effective output without overwriting that choice.
 - Breaking the controller removes its spotlight. `/sl remove` keeps the frame.
 - Holding the lens reveals native light blocks. Sneak-left-click cleanup is explicitly destructive and may remove a light owned by another plugin; keep the warning visible in player/operator documentation.
 - Do not introduce reload support. Restart-based configuration changes are deliberate for persistent world state.
@@ -76,6 +81,9 @@ The pinned Paper build is a beta. A clean compile is necessary but not sufficien
 - Preserve the persistent-data keys `gaffers-lens` and `spotlight-id`. Renaming either requires an explicit migration plan for existing items and entities.
 - Spotlight names are unique case-insensitively. Each controller belongs to at most one spotlight, and the origin, target, and controller must share a world.
 - Persisted intensity is `1-15`; OFF is represented by `enabled: false` so the selected level is retained.
+- Persisted `night-only` and `color` were introduced in schema 2. Schema 1 maps them to `false` and `none`; malformed schema 2 fields fail closed.
+- Automatic night is the normalized world-time interval `[13000, 23000)`. Weather and local block light do not affect it.
+- `none` plus all 16 vanilla dye IDs are stable persisted color values. Color particles never replace native white illumination.
 - Keep `config.yml`, README examples, runtime validation, and tests synchronized. Current accepted ranges are `max-radius` 1-32, `changes-per-tick` 16-2048, and updater size 1-64 MiB.
 - Do not regenerate the Maven Wrapper without pinning both the Maven version and the distribution SHA-256.
 - Never edit generated files under `target/`; change their source inputs instead.
@@ -112,7 +120,7 @@ Before a release tag, manually test on a backed-up matching Paper server:
 
 1. Enable and restart/state restoration.
 2. Create circle and square spotlights on floors and walls.
-3. Dial, exact-level, toggle, overlap, and removal behaviour.
+3. Dial, exact-level, dye color/none, night schedule, toggle, overlap, and removal behaviour.
 4. Block placement/removal, waterlogging, explosions/pistons where relevant.
 5. Chunk unload/reload and controller entity reload.
 6. Update staging and next-restart replacement.
@@ -142,6 +150,7 @@ For a Paper/Minecraft target update:
 - The model stores a controller UUID but not its expected block/chunk position. Removal paths that bypass hanging-break events can leave an active definition without a physical controller; avoid destructive auto-cleanup when the chunk may simply be unloaded.
 - The updater queries GitHub's single `latest` release before applying the API-channel gate. Once a newer API channel becomes latest, old-channel servers may log a rejected update on each startup and will not discover an older compatible release.
 - Vertical footprint edges are clipped at world build limits; only the selected origin and centre are rejected when out of bounds.
+- Vanilla lighting is scalar: the optional `DUST` wash communicates color but cannot tint blocks or the actual light engine.
 
 Do not hide these limitations in documentation or “fix” them by weakening world safety, persistence ordering, or updater validation.
 

@@ -4,6 +4,7 @@ import dev.diogo.paperspotlights.model.BlockPosition;
 import dev.diogo.paperspotlights.model.Plane;
 import dev.diogo.paperspotlights.model.Shape;
 import dev.diogo.paperspotlights.model.Spotlight;
+import dev.diogo.paperspotlights.model.SpotlightColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
@@ -32,34 +33,58 @@ public final class PreviewService {
                     (target.getY() - origin.getY()) * amount,
                     (target.getZ() - origin.getZ()) * amount
             );
-            player.spawnParticle(Particle.END_ROD, point, 1, 0.0, 0.0, 0.0, 0.0);
+            showParticle(player, point, spotlight.color());
         }
 
         if (spotlight.shape() == Shape.CIRCLE) {
             for (int step = 0; step < OUTLINE_STEPS; step++) {
                 double angle = Math.TAU * step / OUTLINE_STEPS;
-                showPlanePoint(player, target, spotlight.plane(),
+                showPlanePoint(player, target, spotlight.plane(), spotlight.color(),
                         Math.cos(angle) * spotlight.radius(),
                         Math.sin(angle) * spotlight.radius());
             }
         } else {
             int radius = spotlight.radius();
             for (int offset = -radius; offset <= radius; offset++) {
-                showPlanePoint(player, target, spotlight.plane(), offset, -radius);
-                showPlanePoint(player, target, spotlight.plane(), offset, radius);
-                showPlanePoint(player, target, spotlight.plane(), -radius, offset);
-                showPlanePoint(player, target, spotlight.plane(), radius, offset);
+                showPlanePoint(player, target, spotlight.plane(), spotlight.color(), offset, -radius);
+                showPlanePoint(player, target, spotlight.plane(), spotlight.color(), offset, radius);
+                showPlanePoint(player, target, spotlight.plane(), spotlight.color(), -radius, offset);
+                showPlanePoint(player, target, spotlight.plane(), spotlight.color(), radius, offset);
             }
         }
     }
 
-    private static void showPlanePoint(Player player, Location center, Plane plane, double u, double v) {
+    private static void showPlanePoint(
+            Player player,
+            Location center,
+            Plane plane,
+            SpotlightColor color,
+            double u,
+            double v
+    ) {
         Location point = switch (plane) {
             case XZ -> center.clone().add(u, 0.0, v);
             case XY -> center.clone().add(u, v, 0.0);
             case ZY -> center.clone().add(0.0, v, u);
         };
-        player.spawnParticle(Particle.END_ROD, point, 1, 0.0, 0.0, 0.0, 0.0);
+        showParticle(player, point, color);
+    }
+
+    private static void showParticle(Player player, Location point, SpotlightColor color) {
+        if (color.particleColor().isPresent()) {
+            player.spawnParticle(
+                    Particle.DUST,
+                    point,
+                    1,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    new Particle.DustOptions(color.particleColor().orElseThrow(), 0.7f)
+            );
+        } else {
+            player.spawnParticle(Particle.END_ROD, point, 1, 0.0, 0.0, 0.0, 0.0);
+        }
     }
 
     private static Location centered(World world, BlockPosition position) {
@@ -71,4 +96,3 @@ public final class PreviewService {
         return key == null ? null : Bukkit.getWorld(key);
     }
 }
-

@@ -44,6 +44,32 @@ class SpotlightTest {
         assertThrows(IllegalArgumentException.class, () -> spotlight(true, 15).withIntensity(16));
     }
 
+    @Test
+    void scheduleAndColorAreIndependentImmutableSettings() {
+        Spotlight original = spotlight(true, 12);
+
+        Spotlight scheduled = original.withNightOnly(true);
+        Spotlight colored = scheduled.withColor(SpotlightColor.BLUE);
+
+        assertFalse(original.nightOnly());
+        assertEquals(SpotlightColor.NONE, original.color());
+        assertTrue(scheduled.nightOnly());
+        assertEquals(SpotlightColor.BLUE, colored.color());
+        assertTrue(colored.enabled());
+        assertEquals(12, colored.intensity());
+    }
+
+    @Test
+    void nightScheduleGatesTheMasterSwitchWithoutReplacingIt() {
+        Spotlight manual = spotlight(true, 12);
+        Spotlight automatic = manual.withNightOnly(true);
+
+        assertTrue(manual.isEffectivelyEnabled(false));
+        assertFalse(automatic.isEffectivelyEnabled(false));
+        assertTrue(automatic.isEffectivelyEnabled(true));
+        assertFalse(automatic.withEnabled(false).isEffectivelyEnabled(true));
+    }
+
     private static Spotlight spotlight(boolean enabled, int intensity) {
         return new Spotlight(
                 UUID.fromString("9d57c4d2-43cd-4b08-9d47-f92569cf4c64"),

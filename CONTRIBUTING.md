@@ -59,6 +59,7 @@ Do not commit generated artifacts, IDE state, server directories, downloaded Pap
 Add focused tests for every changed deterministic behaviour. Existing coverage includes:
 
 - Spotlight geometry and immutable model validation.
+- Dye palette parsing, bounded colored-effect budgets, and night-time thresholds.
 - Controller dial mapping.
 - Contribution overlap and event filtering.
 - Persistence round trips, backups, corrupt data, and schema handling.
@@ -72,10 +73,11 @@ Relevant manual checks include:
 
 1. Clean enable, disable, and restart restoration.
 2. Circle and square spotlights on horizontal and vertical surfaces.
-3. Controller cycling, exact levels, toggling, overlaps, and both removal paths.
+3. Controller cycling, exact levels, dye application, colored-effect disabling, toggling, overlaps, and both removal paths.
 4. Block placement/removal, water, pistons, or explosions when affected.
 5. Chunk unload/reload and item-frame entity reload.
-6. Update staging and application on the next restart when updater code changes.
+6. Automatic mode at dusk/dawn, `/time` jumps, disabled daylight cycle, and restart during both day and night.
+7. Update staging and application on the next restart when updater code changes.
 
 Do not use `/reload` or plugin hot-reload tools for testing.
 

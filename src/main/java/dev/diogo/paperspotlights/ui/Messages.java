@@ -26,15 +26,29 @@ public final class Messages {
         recipient.sendMessage(PREFIX.append(Component.text(message, NamedTextColor.RED)));
     }
 
-    public static void controllerStatus(Player player, Spotlight spotlight) {
-        NamedTextColor stateColor = spotlight.enabled() ? NamedTextColor.GREEN : NamedTextColor.RED;
-        String state = spotlight.enabled() ? "ON" : "OFF";
+    public static void controllerStatus(Player player, Spotlight spotlight, boolean effectivelyEnabled) {
+        NamedTextColor stateColor;
+        String state;
+        if (!spotlight.enabled()) {
+            stateColor = NamedTextColor.RED;
+            state = "OFF";
+        } else if (spotlight.nightOnly() && !effectivelyEnabled) {
+            stateColor = NamedTextColor.YELLOW;
+            state = "WAITING";
+        } else {
+            stateColor = NamedTextColor.GREEN;
+            state = "ON";
+        }
+        String mode = spotlight.nightOnly() ? " • AUTO" : "";
+        String color = spotlight.color().id().equals("none")
+                ? ""
+                : " • " + spotlight.color().id().replace('_', ' ').toUpperCase(java.util.Locale.ROOT);
         player.sendActionBar(
                 Component.text(spotlight.name(), NamedTextColor.GOLD)
                         .append(Component.text(" • ", NamedTextColor.DARK_GRAY))
                         .append(Component.text(state, stateColor))
-                        .append(Component.text(" • " + spotlight.intensity() + "/15", NamedTextColor.GRAY))
+                        .append(Component.text(" • " + spotlight.intensity() + "/15" + mode + color,
+                                NamedTextColor.GRAY))
         );
     }
 }
-

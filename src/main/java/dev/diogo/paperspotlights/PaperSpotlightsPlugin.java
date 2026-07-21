@@ -1,5 +1,6 @@
 package dev.diogo.paperspotlights;
 
+import dev.diogo.paperspotlights.color.ColoredLightEffectService;
 import dev.diogo.paperspotlights.light.LightFieldService;
 import dev.diogo.paperspotlights.persistence.SpotlightRepository;
 import dev.diogo.paperspotlights.setup.LightingLens;
@@ -18,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 public final class PaperSpotlightsPlugin extends JavaPlugin {
 
     private SpotlightManager manager;
+    private ColoredLightEffectService coloredEffects;
     private GitHubReleaseUpdater updater;
     private volatile CompletableFuture<UpdateResult> updateFuture;
     private boolean started;
@@ -42,6 +44,9 @@ public final class PaperSpotlightsPlugin extends JavaPlugin {
         LightingLens lens = new LightingLens(lensKey);
         SetupSessions sessions = new SetupSessions();
         PreviewService preview = new PreviewService();
+        if (getConfig().getBoolean("colored-effects.enabled", true)) {
+            coloredEffects = new ColoredLightEffectService(this);
+        }
 
         SpotlightRepository repository = new SpotlightRepository(getDataFolder().toPath());
         manager = new SpotlightManager(
@@ -50,7 +55,14 @@ public final class PaperSpotlightsPlugin extends JavaPlugin {
                 new LightFieldService(),
                 controllerKey,
                 maxRadius,
-                changesPerTick
+                changesPerTick,
+                spotlights -> {
+                    if (coloredEffects != null) {
+                        coloredEffects.replaceEffects(spotlights.stream()
+                                .map(ColoredLightEffectService.Effect::from)
+                                .toList());
+                    }
+                }
         );
 
         try {
@@ -58,6 +70,7 @@ public final class PaperSpotlightsPlugin extends JavaPlugin {
         } catch (Exception exception) {
             getLogger().severe("PaperSpotlights did not start because its saved state could not be loaded safely.");
             getLogger().severe(exception.getMessage());
+            closeColoredEffects();
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -67,6 +80,7 @@ public final class PaperSpotlightsPlugin extends JavaPlugin {
         if (command == null) {
             getLogger().severe("The spotlight command is missing from plugin.yml.");
             manager.close();
+            closeColoredEffects();
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -76,6 +90,9 @@ public final class PaperSpotlightsPlugin extends JavaPlugin {
                 new SpotlightListener(this, manager, sessions, lens, controllerKey),
                 this
         );
+        if (coloredEffects != null) {
+            coloredEffects.start();
+        }
 
         started = true;
         getLogger().info("Enabled " + manager.all().size() + " spotlight(s). No NMS or version-specific internals in use.");
@@ -97,6 +114,7 @@ public final class PaperSpotlightsPlugin extends JavaPlugin {
             manager.close();
             started = false;
         }
+        closeColoredEffects();
     }
 
     private void startUpdater() {
@@ -167,6 +185,13 @@ public final class PaperSpotlightsPlugin extends JavaPlugin {
             case UpdateResult.Failed failed -> getLogger().warning(
                     "Automatic update check failed [" + failed.failure() + "]: " + failed.message()
             );
+        }
+    }
+
+    private void closeColoredEffects() {
+        if (coloredEffects != null) {
+            coloredEffects.close();
+            coloredEffects = null;
         }
     }
 }

@@ -2,11 +2,11 @@
 
 > Minecraft-native, player-built dimmable stage lighting for Paper.
 
-PaperSpotlights turns vanilla invisible `LIGHT` blocks into controllable circle or square lighting areas. Players build any fixture they want, aim it with an in-game setup lens, and operate it from a clock mounted in an item frame—no resource pack, client mod, or companion plugin required.
+PaperSpotlights turns vanilla invisible `LIGHT` blocks into controllable circle or square lighting areas. Players build any fixture they want, aim it with an in-game setup lens, add an optional dye-colored particle wash, and operate it from a clock mounted in an item frame—no resource pack, client mod, or companion plugin required.
 
 **Target:** Paper 26.2 · Java 25 · Private/trusted SMPs · No permissions by design
 
-> **Development status:** `0.1.0` release candidate. The project passes its automated build and packaged-JAR checks, but the first public release should not be published until the real-Paper staging checklist in [CONTRIBUTING.md](CONTRIBUTING.md) is complete. The repository currently pins the beta API build `26.2.build.62-beta`; Paper listed 26.2 as experimental on 2026-07-21. See [Paper downloads](https://papermc.io/downloads/paper/) and [Paper's project setup guide](https://docs.papermc.io/paper/dev/project-setup/).
+> **Development status:** `v0.1.0` is available on the [Releases page](https://github.com/diogor0d/paper-spotlights/releases/tag/v0.1.0); changes after that tag are unreleased until a new version is cut. The repository currently pins the beta API build `26.2.build.62-beta`, so complete the real-Paper staging checklist in [CONTRIBUTING.md](CONTRIBUTING.md) before each release.
 
 ## Highlights
 
@@ -14,6 +14,8 @@ PaperSpotlights turns vanilla invisible `LIGHT` blocks into controllable circle 
 - **Simple setup:** select the fixture origin, target surface, and controller; one command creates the light.
 - **Useful shapes:** filled circles or squares on floors, ceilings, and walls.
 - **Real dimming:** eight clock-dial positions from light level 1 to 15, plus toggle without losing the chosen level.
+- **Vanilla colored effects:** apply any vanilla dye to create a subtle bounded color wash while native `LIGHT` blocks provide real illumination.
+- **Stadium nights:** each spotlight can be armed to switch on suddenly at nightfall and off at dawn using its own world's clock.
 - **Predictable world handling:** ordinary blocks and existing fluids win, overlaps use the brightest active level, and distant chunks are never force-loaded.
 - **Crash-conscious state:** managed cells and definitions are persisted before relevant world changes, with a previous-state backup for manual recovery.
 - **Conservative updates:** optional GitHub Releases checks verify the digest and plugin identity, then stage an update for the next restart.
@@ -56,6 +58,7 @@ The clicked target face selects the plane automatically: floors and ceilings use
 |---|---|
 | Right-click | Advance through `1, 3, 5, 7, 9, 11, 13, 15`. |
 | Sneak-right-click | Toggle power while remembering the selected level. |
+| Right-click while holding a dye | Apply that dye's color wash without consuming it. |
 | Break the item frame | Remove the spotlight and its managed lights. |
 
 Holding the Gaffer's Lens reveals vanilla invisible `LIGHT` blocks. Sneak-left-clicking a visible light removes it only when PaperSpotlights does not manage it. This cleanup is destructive and cannot identify lights owned by another plugin, so use it carefully on mixed-plugin servers.
@@ -71,13 +74,15 @@ Holding the Gaffer's Lens reveals vanilla invisible `LIGHT` blocks. Sneak-left-c
 | `/sl info <name>` | Show details and a short particle preview. |
 | `/sl toggle <name>` | Toggle without the physical controller. |
 | `/sl level <name> <1-15>` | Set an exact light level. |
+| `/sl color <name> <none\|color>` | Apply a vanilla dye color or disable the colored effect. |
+| `/sl auto <name> <on\|off>` | Enable or disable night-only automation. |
 | `/sl remove <name>` | Remove the spotlight while keeping its item frame. |
 
 There are intentionally no permission nodes. Any player can create, operate, or remove a spotlight.
 
 ## Installation
 
-No public release has been published yet. Build the current release candidate from source until the first staging-tested GitHub Release is available.
+Download `PaperSpotlights.jar` from the repository's Releases page when your GitHub account has access, or build the current development version from source.
 
 ### Build from source
 
@@ -104,8 +109,6 @@ The release-ready artifact is `target/PaperSpotlights.jar`.
 3. Confirm the plugin enables successfully before creating lights.
 4. If automatic updates are wanted, stop the server and configure the repository as shown below.
 
-Once the first release exists, operators can download the same `PaperSpotlights.jar` asset from this repository's GitHub Releases page instead of building it.
-
 ## Lighting behaviour
 
 - A circle or square is a filled emitter footprint. Vanilla light continues outside it and is blocked naturally by world geometry.
@@ -116,6 +119,15 @@ Once the first release exists, operators can download the same `PaperSpotlights.
 - Overlapping spotlights resolve to the highest active level; disabling one does not erase another owner's light.
 - Changes are coalesced and processed over multiple ticks. Unloaded chunks reconcile when loaded and are never force-loaded.
 - Footprints crossing the world's vertical limits are clipped; the selected origin and centre must themselves be in bounds.
+- Minecraft's vanilla light engine has no RGB channels. Colors are a cosmetic `DUST` particle wash over the target area; actual block illumination remains white and behaves normally.
+- Colored effects are player-targeted and bounded to 48 particles, 12 effect packets, and 64 spotlight checks per player every 10 ticks, within 48 blocks.
+- `color none` disables particles for one spotlight. `colored-effects.enabled: false` disables all color particles without changing real lighting.
+
+### Automatic night mode
+
+`/sl auto <name> on` makes the spotlight night-only. Its normal ON/OFF state remains a master switch: an armed automatic spotlight illuminates from world time `13000` through `22999`, then switches off at dawn. Sneak-clicking its clock or using `/sl toggle` arms or disarms it without forgetting the schedule. Use `/sl auto <name> off` to return to ordinary all-day manual control.
+
+The schedule follows each spotlight's own world time and reacts to `/time` changes or a frozen daylight cycle. It deliberately ignores weather and local block light so the transition is exact and predictable.
 
 The default maximum radius is 16. A square of radius `r` uses `(2r + 1)^2` emitters, so larger limits have a real lighting-engine and persistence cost.
 
@@ -127,6 +139,9 @@ PaperSpotlights creates `plugins/PaperSpotlights/config.yml`:
 max-radius: 16
 changes-per-tick: 128
 
+colored-effects:
+  enabled: true
+
 updates:
   enabled: true
   repository: ''
@@ -136,6 +151,7 @@ updates:
 
 - `max-radius` accepts `1-32`; 16 is the recommended private-SMP default.
 - `changes-per-tick` accepts `16-2048` and bounds block reconciliation work per server tick.
+- `colored-effects.enabled` is the global switch for cosmetic colored particles; native illumination is unaffected.
 - `updates.max-size-mib` accepts `1-64` and caps release-asset downloads.
 - A blank `updates.repository` disables network requests even when `enabled` is true.
 - Configuration changes require a restart. Runtime reload support is deliberately omitted for persistent world state.

@@ -6,6 +6,11 @@ max-radius: 16
 # cost of changing a large spotlight or several overlapping spotlights.
 changes-per-tick: 128
 
+colored-effects:
+  # Shows the optional dye-colored DUST wash on vanilla clients. Disabling
+  # this never affects the real invisible LIGHT blocks.
+  enabled: true
+
 updates:
   # Checks the latest non-prerelease GitHub Release when the plugin starts. A
   # verified update is staged in Paper's update folder and applies on restart.

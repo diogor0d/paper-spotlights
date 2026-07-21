@@ -3,9 +3,11 @@ package dev.diogo.paperspotlights;
 import dev.diogo.paperspotlights.controller.ControllerDial;
 import dev.diogo.paperspotlights.light.LightFieldService;
 import dev.diogo.paperspotlights.model.BlockPosition;
+import dev.diogo.paperspotlights.model.NightSchedule;
 import dev.diogo.paperspotlights.model.Plane;
 import dev.diogo.paperspotlights.model.Shape;
 import dev.diogo.paperspotlights.model.Spotlight;
+import dev.diogo.paperspotlights.model.SpotlightColor;
 import dev.diogo.paperspotlights.persistence.SpotlightRepository;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -31,6 +33,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /** Coordinates persistence, overlap resolution, and bounded world updates. */
@@ -45,10 +48,12 @@ public final class SpotlightManager {
     private final NamespacedKey controllerKey;
     private final int maxRadius;
     private final int changesPerTick;
+    private final Consumer<List<Spotlight>> spotlightObserver;
 
     private final Map<UUID, Spotlight> byId = new LinkedHashMap<>();
     private final Map<String, UUID> byName = new LinkedHashMap<>();
     private final Map<UUID, UUID> byController = new LinkedHashMap<>();
+    private final Map<String, Boolean> nightByWorld = new LinkedHashMap<>();
     private final LinkedHashSet<BlockPosition> pending = new LinkedHashSet<>();
 
     private BukkitTask worker;
@@ -62,7 +67,8 @@ public final class SpotlightManager {
             LightFieldService lightField,
             NamespacedKey controllerKey,
             int maxRadius,
-            int changesPerTick
+            int changesPerTick,
+            Consumer<List<Spotlight>> spotlightObserver
     ) {
         this.plugin = plugin;
         this.repository = repository;
@@ -70,6 +76,7 @@ public final class SpotlightManager {
         this.controllerKey = controllerKey;
         this.maxRadius = maxRadius;
         this.changesPerTick = changesPerTick;
+        this.spotlightObserver = spotlightObserver;
     }
 
     public void initialize() throws IOException {
@@ -108,7 +115,11 @@ public final class SpotlightManager {
         }
 
         lightField.loadManaged(state.managedLights());
-        Set<BlockPosition> affected = lightField.rebuild(byId.values());
+        if (state.migrationRequired()) {
+            persist();
+        }
+        updateNightStates();
+        Set<BlockPosition> affected = lightField.rebuild(effectiveSpotlights());
         Set<BlockPosition> claimsAdded = lightField.prepareClaims(affected);
         if (!claimsAdded.isEmpty()) {
             persist();
@@ -118,6 +129,7 @@ public final class SpotlightManager {
         for (Spotlight spotlight : byId.values()) {
             tagLoadedController(spotlight);
         }
+        publishSpotlights();
         worker = Bukkit.getScheduler().runTaskTimer(plugin, this::processBatch, 1L, 1L);
     }
 
@@ -162,6 +174,8 @@ public final class SpotlightManager {
                 radius,
                 15,
                 true,
+                false,
+                SpotlightColor.NONE,
                 controller.getUniqueId()
         );
         commitMutation(() -> byId.put(spotlight.id(), spotlight));
@@ -191,6 +205,26 @@ public final class SpotlightManager {
         commitMutation(() -> byId.put(current.id(), replacement));
         alignLoadedController(replacement);
         return replacement;
+    }
+
+    public Spotlight setNightOnly(String name, boolean nightOnly) throws OperationException {
+        Spotlight current = requiredByName(name);
+        Spotlight replacement = current.withNightOnly(nightOnly);
+        commitMutation(() -> byId.put(current.id(), replacement));
+        return replacement;
+    }
+
+    public Spotlight setColor(String name, SpotlightColor color) throws OperationException {
+        Spotlight current = requiredByName(name);
+        Spotlight replacement = current.withColor(color);
+        commitMutation(() -> byId.put(current.id(), replacement));
+        return replacement;
+    }
+
+    public boolean isEffectivelyEnabled(Spotlight spotlight) {
+        return spotlight.isEffectivelyEnabled(
+                nightByWorld.getOrDefault(spotlight.origin().worldKey(), false)
+        );
     }
 
     public Spotlight remove(String name) throws OperationException {
@@ -265,7 +299,8 @@ public final class SpotlightManager {
         mutation.run();
         try {
             reindex();
-            Set<BlockPosition> affected = lightField.rebuild(byId.values());
+            updateNightStates();
+            Set<BlockPosition> affected = lightField.rebuild(effectiveSpotlights());
             lightField.prepareClaims(affected);
             persist();
             enqueue(affected);
@@ -274,9 +309,11 @@ public final class SpotlightManager {
             byId.putAll(before);
             reindex();
             lightField.loadManaged(managedBefore);
-            lightField.rebuild(byId.values());
+            updateNightStates();
+            lightField.rebuild(effectiveSpotlights());
             throw new OperationException("Could not save the spotlight state; nothing was changed.", exception);
         }
+        publishSpotlights();
     }
 
     private void reindex() {
@@ -292,6 +329,11 @@ public final class SpotlightManager {
     }
 
     private void processBatch() {
+        Map<String, Boolean> previousNightStates = new LinkedHashMap<>(nightByWorld);
+        if (updateNightStates()) {
+            reconcileNightTransition(previousNightStates);
+        }
+
         int processed = 0;
         Iterator<BlockPosition> iterator = pending.iterator();
         while (iterator.hasNext() && processed < changesPerTick) {
@@ -357,6 +399,58 @@ public final class SpotlightManager {
         } catch (IOException exception) {
             plugin.getLogger().severe("Could not save spotlight state: " + exception.getMessage());
         }
+    }
+
+    private List<Spotlight> effectiveSpotlights() {
+        return byId.values().stream().filter(this::isEffectivelyEnabled).toList();
+    }
+
+    private boolean updateNightStates() {
+        Set<String> scheduledWorlds = new LinkedHashSet<>();
+        for (Spotlight spotlight : byId.values()) {
+            if (spotlight.nightOnly()) {
+                scheduledWorlds.add(spotlight.origin().worldKey());
+            }
+        }
+
+        boolean changed = nightByWorld.keySet().removeIf(key -> !scheduledWorlds.contains(key));
+        for (String worldKey : scheduledWorlds) {
+            NamespacedKey key = NamespacedKey.fromString(worldKey);
+            World world = key == null ? null : Bukkit.getWorld(key);
+            if (world == null) {
+                changed |= nightByWorld.remove(worldKey) != null;
+                continue;
+            }
+            boolean night = NightSchedule.isNight(world.getTime());
+            Boolean previous = nightByWorld.put(worldKey, night);
+            changed |= previous == null || previous != night;
+        }
+        return changed;
+    }
+
+    private void reconcileNightTransition(Map<String, Boolean> previousNightStates) {
+        Set<BlockPosition> affected = lightField.rebuild(effectiveSpotlights());
+        Set<BlockPosition> claimsAdded = lightField.prepareClaims(affected);
+        if (!claimsAdded.isEmpty()) {
+            try {
+                persist();
+            } catch (IOException exception) {
+                lightField.rollbackClaims(claimsAdded);
+                nightByWorld.clear();
+                nightByWorld.putAll(previousNightStates);
+                lightField.rebuild(effectiveSpotlights());
+                plugin.getLogger().severe(
+                        "Could not save dusk light claims; automatic lights stayed unchanged: "
+                                + exception.getMessage()
+                );
+                return;
+            }
+        }
+        enqueue(affected);
+    }
+
+    private void publishSpotlights() {
+        spotlightObserver.accept(all());
     }
 
     private Spotlight requiredByName(String name) throws OperationException {

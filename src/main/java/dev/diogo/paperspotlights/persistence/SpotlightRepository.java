@@ -4,6 +4,7 @@ import dev.diogo.paperspotlights.model.BlockPosition;
 import dev.diogo.paperspotlights.model.Plane;
 import dev.diogo.paperspotlights.model.Shape;
 import dev.diogo.paperspotlights.model.Spotlight;
+import dev.diogo.paperspotlights.model.SpotlightColor;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -30,7 +31,8 @@ import java.util.UUID;
  */
 public final class SpotlightRepository {
 
-    private static final int SCHEMA_VERSION = 1;
+    private static final int LEGACY_SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
 
     private final Path statePath;
     private final Path temporaryPath;
@@ -44,7 +46,7 @@ public final class SpotlightRepository {
 
     public State load() throws IOException {
         if (Files.notExists(statePath)) {
-            return new State(List.of(), Map.of());
+            return new State(List.of(), Map.of(), false);
         }
 
         YamlConfiguration yaml = new YamlConfiguration();
@@ -55,17 +57,21 @@ public final class SpotlightRepository {
         }
 
         int schemaVersion = yaml.getInt("schema-version", -1);
-        if (schemaVersion != SCHEMA_VERSION) {
+        if (schemaVersion != LEGACY_SCHEMA_VERSION && schemaVersion != SCHEMA_VERSION) {
             throw new IOException(
-                    "Unsupported state schema " + schemaVersion + " (expected " + SCHEMA_VERSION + ")"
+                    "Unsupported state schema " + schemaVersion + " (expected "
+                            + LEGACY_SCHEMA_VERSION + " or " + SCHEMA_VERSION + ")"
             );
         }
 
-        List<Spotlight> spotlights = readSpotlights(yaml.getConfigurationSection("spotlights"));
+        List<Spotlight> spotlights = readSpotlights(
+                yaml.getConfigurationSection("spotlights"),
+                schemaVersion
+        );
         Map<BlockPosition, String> managedLights = readManagedLights(
                 yaml.getConfigurationSection("managed-lights")
         );
-        return new State(spotlights, managedLights);
+        return new State(spotlights, managedLights, schemaVersion == LEGACY_SCHEMA_VERSION);
     }
 
     public void save(Collection<Spotlight> spotlights, Map<BlockPosition, String> managedLights)
@@ -105,7 +111,8 @@ public final class SpotlightRepository {
         }
     }
 
-    private static List<Spotlight> readSpotlights(ConfigurationSection root) throws IOException {
+    private static List<Spotlight> readSpotlights(ConfigurationSection root, int schemaVersion)
+            throws IOException {
         if (root == null) {
             return List.of();
         }
@@ -123,7 +130,16 @@ public final class SpotlightRepository {
                 Shape shape = Shape.valueOf(requiredString(section, "shape"));
                 int radius = section.getInt("radius", -1);
                 int intensity = section.getInt("intensity", -1);
-                boolean enabled = section.getBoolean("enabled", true);
+                boolean enabled = schemaVersion == LEGACY_SCHEMA_VERSION
+                        ? section.getBoolean("enabled", true)
+                        : requiredBoolean(section, "enabled");
+                boolean nightOnly = schemaVersion == LEGACY_SCHEMA_VERSION
+                        ? false
+                        : requiredBoolean(section, "night-only");
+                SpotlightColor color = schemaVersion == LEGACY_SCHEMA_VERSION
+                        ? SpotlightColor.NONE
+                        : SpotlightColor.parse(requiredString(section, "color"))
+                                .orElseThrow(() -> new IllegalArgumentException("Unknown color"));
                 UUID controllerUuid = UUID.fromString(requiredString(section, "controller-uuid"));
 
                 result.add(new Spotlight(
@@ -136,6 +152,8 @@ public final class SpotlightRepository {
                         radius,
                         intensity,
                         enabled,
+                        nightOnly,
+                        color,
                         controllerUuid
                 ));
             } catch (IllegalArgumentException exception) {
@@ -178,6 +196,8 @@ public final class SpotlightRepository {
                     section.set("radius", spotlight.radius());
                     section.set("intensity", spotlight.intensity());
                     section.set("enabled", spotlight.enabled());
+                    section.set("night-only", spotlight.nightOnly());
+                    section.set("color", spotlight.color().id());
                     section.set("controller-uuid", spotlight.controllerUuid().toString());
                 });
     }
@@ -243,7 +263,19 @@ public final class SpotlightRepository {
         return value;
     }
 
-    public record State(List<Spotlight> spotlights, Map<BlockPosition, String> managedLights) {
+    private static boolean requiredBoolean(ConfigurationSection section, String path)
+            throws IOException {
+        if (!section.isBoolean(path)) {
+            throw new IOException("Missing boolean " + section.getCurrentPath() + "." + path);
+        }
+        return section.getBoolean(path);
+    }
+
+    public record State(
+            List<Spotlight> spotlights,
+            Map<BlockPosition, String> managedLights,
+            boolean migrationRequired
+    ) {
 
         public State {
             spotlights = List.copyOf(spotlights);

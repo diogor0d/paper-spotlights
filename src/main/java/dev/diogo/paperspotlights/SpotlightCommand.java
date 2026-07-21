@@ -2,6 +2,7 @@ package dev.diogo.paperspotlights;
 
 import dev.diogo.paperspotlights.model.Shape;
 import dev.diogo.paperspotlights.model.Spotlight;
+import dev.diogo.paperspotlights.model.SpotlightColor;
 import dev.diogo.paperspotlights.setup.LightingLens;
 import dev.diogo.paperspotlights.setup.SetupSession;
 import dev.diogo.paperspotlights.setup.SetupSessions;
@@ -24,7 +25,7 @@ import java.util.Locale;
 public final class SpotlightCommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> SUBCOMMANDS = List.of(
-            "help", "wand", "create", "cancel", "list", "info", "toggle", "level", "remove"
+            "help", "wand", "create", "cancel", "list", "info", "toggle", "level", "color", "auto", "remove"
     );
 
     private final SpotlightManager manager;
@@ -60,6 +61,8 @@ public final class SpotlightCommand implements CommandExecutor, TabCompleter {
                 case "info" -> info(sender, args);
                 case "toggle" -> toggle(sender, args);
                 case "level" -> level(sender, args);
+                case "color" -> color(sender, args);
+                case "auto" -> auto(sender, args);
                 case "remove" -> remove(sender, args);
                 default -> Messages.error(sender, "Unknown subcommand. Run /spotlight help.");
             }
@@ -82,7 +85,7 @@ public final class SpotlightCommand implements CommandExecutor, TabCompleter {
             return matching(SUBCOMMANDS, args[0]);
         }
         if (args.length == 2
-                && List.of("info", "toggle", "level", "remove")
+                && List.of("info", "toggle", "level", "color", "auto", "remove")
                 .contains(args[0].toLowerCase(Locale.ROOT))) {
             return matching(manager.all().stream().map(Spotlight::name).toList(), args[1]);
         }
@@ -94,6 +97,15 @@ public final class SpotlightCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 3 && args[0].equalsIgnoreCase("level")) {
             return matching(List.of("1", "3", "5", "7", "9", "11", "13", "15"), args[2]);
+        }
+        if (args.length == 3 && args[0].equalsIgnoreCase("color")) {
+            return matching(
+                    java.util.Arrays.stream(SpotlightColor.values()).map(SpotlightColor::id).toList(),
+                    args[2]
+            );
+        }
+        if (args.length == 3 && args[0].equalsIgnoreCase("auto")) {
+            return matching(List.of("on", "off"), args[2]);
         }
         return List.of();
     }
@@ -172,20 +184,25 @@ public final class SpotlightCommand implements CommandExecutor, TabCompleter {
         }
         Messages.info(sender, "Spotlights (" + spotlights.size() + "):");
         for (Spotlight spotlight : spotlights) {
-            String state = spotlight.enabled() ? "ON" : "OFF";
+            String state = stateLabel(spotlight);
+            String mode = spotlight.nightOnly() ? "AUTO" : "MANUAL";
             Messages.info(
                     sender,
                     "- " + spotlight.name() + ": " + state + " " + spotlight.intensity()
                             + "/15, " + spotlight.shape().name().toLowerCase(Locale.ROOT)
-                            + " r=" + spotlight.radius()
+                            + " r=" + spotlight.radius() + ", " + mode
+                            + ", color=" + spotlight.color().id()
             );
         }
     }
 
     private void info(CommandSender sender, String[] args) throws CommandFailure {
         Spotlight spotlight = named(args, "Usage: /spotlight info <name>");
-        Messages.info(sender, spotlight.name() + " — " + (spotlight.enabled() ? "ON" : "OFF")
+        Messages.info(sender, spotlight.name() + " — " + stateLabel(spotlight)
                 + " at " + spotlight.intensity() + "/15");
+        Messages.info(sender, "Mode: " + (spotlight.nightOnly() ? "automatic night-only" : "manual")
+                + (spotlight.enabled() ? " (armed)" : " (switched off)")
+                + ", color " + spotlight.color().id());
         Messages.info(sender, "Shape: " + spotlight.shape().name().toLowerCase(Locale.ROOT)
                 + ", radius " + spotlight.radius() + ", plane " + spotlight.plane());
         Messages.info(sender, "Origin: " + coordinates(spotlight.origin().x(), spotlight.origin().y(), spotlight.origin().z())
@@ -199,7 +216,14 @@ public final class SpotlightCommand implements CommandExecutor, TabCompleter {
             throws CommandFailure, SpotlightManager.OperationException {
         Spotlight current = named(args, "Usage: /spotlight toggle <name>");
         Spotlight updated = manager.toggle(current.name());
-        Messages.success(sender, updated.name() + " is now " + (updated.enabled() ? "ON" : "OFF") + ".");
+        if (updated.nightOnly()) {
+            Messages.success(
+                    sender,
+                    updated.name() + " is now " + (updated.enabled() ? "armed for night." : "disarmed.")
+            );
+        } else {
+            Messages.success(sender, updated.name() + " is now " + (updated.enabled() ? "ON" : "OFF") + ".");
+        }
     }
 
     private void level(CommandSender sender, String[] args)
@@ -217,6 +241,39 @@ public final class SpotlightCommand implements CommandExecutor, TabCompleter {
         Messages.success(sender, updated.name() + " intensity is now " + updated.intensity() + "/15.");
     }
 
+    private void color(CommandSender sender, String[] args)
+            throws CommandFailure, SpotlightManager.OperationException {
+        if (args.length != 3) {
+            throw new CommandFailure("Usage: /spotlight color <name> <none|dye-color>");
+        }
+        SpotlightColor color = SpotlightColor.parse(args[2])
+                .orElseThrow(() -> new CommandFailure("Unknown dye color. Use tab completion or 'none'."));
+        Spotlight updated = manager.setColor(requiredNamed(args[1]), color);
+        String description = color == SpotlightColor.NONE
+                ? "now uses plain native lighting"
+                : "now uses a " + color.id().replace('_', ' ') + " color wash";
+        Messages.success(sender, updated.name() + " " + description + ".");
+    }
+
+    private void auto(CommandSender sender, String[] args)
+            throws CommandFailure, SpotlightManager.OperationException {
+        if (args.length != 3) {
+            throw new CommandFailure("Usage: /spotlight auto <name> <on|off>");
+        }
+        boolean nightOnly = switch (args[2].toLowerCase(Locale.ROOT)) {
+            case "on" -> true;
+            case "off" -> false;
+            default -> throw new CommandFailure("Automatic mode must be 'on' or 'off'.");
+        };
+        Spotlight updated = manager.setNightOnly(requiredNamed(args[1]), nightOnly);
+        Messages.success(
+                sender,
+                updated.name() + (nightOnly
+                        ? " will now illuminate only from nightfall to dawn."
+                        : " is now manually controlled at all times.")
+        );
+    }
+
     private void remove(CommandSender sender, String[] args)
             throws CommandFailure, SpotlightManager.OperationException {
         Spotlight current = named(args, "Usage: /spotlight remove <name>");
@@ -232,6 +289,22 @@ public final class SpotlightCommand implements CommandExecutor, TabCompleter {
                 .orElseThrow(() -> new CommandFailure("No spotlight named '" + args[1] + "'."));
     }
 
+    private String requiredNamed(String name) throws CommandFailure {
+        return manager.findByName(name)
+                .orElseThrow(() -> new CommandFailure("No spotlight named '" + name + "'."))
+                .name();
+    }
+
+    private String stateLabel(Spotlight spotlight) {
+        if (!spotlight.enabled()) {
+            return "OFF";
+        }
+        if (spotlight.nightOnly() && !manager.isEffectivelyEnabled(spotlight)) {
+            return "WAITING";
+        }
+        return "ON";
+    }
+
     private static Player requirePlayer(CommandSender sender) throws CommandFailure {
         if (sender instanceof Player player) {
             return player;
@@ -243,7 +316,8 @@ public final class SpotlightCommand implements CommandExecutor, TabCompleter {
         Messages.info(sender, "/spotlight wand — get the setup lens");
         Messages.info(sender, "/spotlight create <name> <circle|square> <radius>");
         Messages.info(sender, "/spotlight list | info <name> | toggle <name>");
-        Messages.info(sender, "/spotlight level <name> <1-15> | remove <name> | cancel");
+        Messages.info(sender, "/spotlight level <name> <1-15> | color <name> <none|color>");
+        Messages.info(sender, "/spotlight auto <name> <on|off> | remove <name> | cancel");
         Messages.info(sender, "Clock frame: click to dim, sneak-click to toggle, break to remove.");
     }
 
