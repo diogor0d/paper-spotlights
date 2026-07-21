@@ -6,7 +6,7 @@ PaperSpotlights turns vanilla invisible `LIGHT` blocks into controllable circle 
 
 **Target:** Paper 26.2 · Java 25 · Private/trusted SMPs · No permissions by design
 
-> **Development status:** `v0.1.0` is available on the [Releases page](https://github.com/diogor0d/paper-spotlights/releases/tag/v0.1.0); changes after that tag are unreleased until a new version is cut. The repository currently pins the beta API build `26.2.build.62-beta`, so complete the real-Paper staging checklist in [CONTRIBUTING.md](CONTRIBUTING.md) before each release.
+> **Development status:** `v0.2.0` is available on the [Releases page](https://github.com/diogor0d/paper-spotlights/releases/tag/v0.2.0); changes after that tag are unreleased until a new version is cut. The repository currently pins the beta API build `26.2.build.62-beta`, so complete the real-Paper staging checklist in [CONTRIBUTING.md](CONTRIBUTING.md) before each release.
 
 ## Highlights
 
