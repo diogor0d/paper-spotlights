@@ -124,8 +124,10 @@ Releases are maintainer-controlled:
 1. Set a stable semantic version in `pom.xml`.
 2. Run `clean verify`.
 3. Complete the backed-up Paper staging checklist.
-4. Create a matching `vMAJOR.MINOR.PATCH` tag.
-5. Allow the release workflow to publish exactly `PaperSpotlights.jar`.
+4. Commit and push the version change.
+5. On Windows, run `./scripts/verify-release.ps1 vMAJOR.MINOR.PATCH` from the clean, pushed commit.
+6. Create and push that exact tag only after the preflight succeeds.
+7. Allow the release workflow to publish exactly `PaperSpotlights.jar`.
 
 The first build after raising `api-version` must be installed and tested manually. The updater intentionally refuses to cross API channels.
 

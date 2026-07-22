@@ -6,7 +6,7 @@
 
   <groupId>dev.diogo</groupId>
   <artifactId>paper-spotlights</artifactId>
-  <version>0.2.1</version>
+  <version>0.3.1</version>
   <name>PaperSpotlights</name>
   <description>Player-built, dimmable spotlights for Paper servers.</description>
 

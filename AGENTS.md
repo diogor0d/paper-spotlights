@@ -137,8 +137,10 @@ For a normal plugin release:
 1. Change the single project version in `pom.xml`.
 2. Run `clean verify`; resource filtering and packaged-artifact tests must confirm the descriptor version.
 3. Complete the real-Paper smoke checklist.
-4. Create a stable `vMAJOR.MINOR.PATCH` tag matching the POM.
-5. Let `.github/workflows/release.yml` publish exactly `PaperSpotlights.jar`.
+4. Commit and push the version change.
+5. On Windows, run `./scripts/verify-release.ps1 vMAJOR.MINOR.PATCH` from the clean, pushed commit.
+6. Create a stable `vMAJOR.MINOR.PATCH` tag matching the POM only after the preflight succeeds.
+7. Let `.github/workflows/release.yml` publish exactly `PaperSpotlights.jar`.
 
 For a Paper/Minecraft target update:
 

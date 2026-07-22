@@ -23,9 +23,15 @@ jobs:
       - name: Check tag matches project version
         shell: bash
         run: |
-          [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error title=Invalid release tag::Expected vMAJOR.MINOR.PATCH, got ${GITHUB_REF_NAME}."
+            exit 1
+          fi
           project_version="$(bash ./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)"
-          test "${GITHUB_REF_NAME}" = "v${project_version}"
+          if [[ "${GITHUB_REF_NAME}" != "v${project_version}" ]]; then
+            echo "::error title=Release version mismatch::Tag ${GITHUB_REF_NAME} points to a commit whose pom.xml version is ${project_version}. Commit the matching version before creating the tag."
+            exit 1
+          fi
       - name: Build and test
         run: bash ./mvnw --batch-mode clean verify
       - name: Create GitHub release
